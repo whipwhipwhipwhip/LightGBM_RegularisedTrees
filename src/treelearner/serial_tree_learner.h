@@ -187,6 +187,8 @@ class SerialTreeLearner: public TreeLearner {
   data_size_t num_data_;
   /*! \brief number of features */
   int num_features_;
+  /*! \brief whether each (real-indexed) feature has already been used for a split in the tree currently being built */
+  std::vector<int8_t> feature_used_in_cur_tree_;
   /*! \brief training data */
   const Dataset* train_data_;
   /*! \brief gradients of current iteration */

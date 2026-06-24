@@ -247,6 +247,7 @@ const std::unordered_set<std::string>& Config::parameter_set() {
   "monotone_constraints_method",
   "monotone_penalty",
   "feature_contri",
+  "unused_feature_penalty",
   "forcedsplits_filename",
   "refit_decay_rate",
   "cegb_tradeoff",
@@ -477,6 +478,10 @@ void Config::GetMembersFromString(const std::unordered_map<std::string, std::str
   if (GetString(params, "feature_contri", &tmp_str)) {
     feature_contri = Common::StringToArray<double>(tmp_str, ',');
   }
+
+  GetDouble(params, "unused_feature_penalty", &unused_feature_penalty);
+  CHECK_GE(unused_feature_penalty, 0.0);
+  CHECK_LE(unused_feature_penalty, 1.0);
 
   GetString(params, "forcedsplits_filename", &forcedsplits_filename);
 
@@ -733,6 +738,7 @@ std::string Config::SaveMembersToString() const {
   str_buf << "[monotone_constraints_method: " << monotone_constraints_method << "]\n";
   str_buf << "[monotone_penalty: " << monotone_penalty << "]\n";
   str_buf << "[feature_contri: " << Common::Join(feature_contri, ",") << "]\n";
+  str_buf << "[unused_feature_penalty: " << unused_feature_penalty << "]\n";
   str_buf << "[forcedsplits_filename: " << forcedsplits_filename << "]\n";
   str_buf << "[refit_decay_rate: " << refit_decay_rate << "]\n";
   str_buf << "[cegb_tradeoff: " << cegb_tradeoff << "]\n";
@@ -860,6 +866,7 @@ const std::unordered_map<std::string, std::vector<std::string>>& Config::paramet
     {"monotone_constraints_method", {"monotone_constraining_method", "mc_method"}},
     {"monotone_penalty", {"monotone_splits_penalty", "ms_penalty", "mc_penalty"}},
     {"feature_contri", {"feature_contrib", "fc", "fp", "feature_penalty"}},
+    {"unused_feature_penalty", {}},
     {"forcedsplits_filename", {"fs", "forced_splits_filename", "forced_splits_file", "forced_splits"}},
     {"refit_decay_rate", {}},
     {"cegb_tradeoff", {}},
@@ -1006,6 +1013,7 @@ const std::unordered_map<std::string, std::string>& Config::ParameterTypes() {
     {"monotone_constraints_method", "string"},
     {"monotone_penalty", "double"},
     {"feature_contri", "vector<double>"},
+    {"unused_feature_penalty", "double"},
     {"forcedsplits_filename", "string"},
     {"refit_decay_rate", "double"},
     {"cegb_tradeoff", "double"},

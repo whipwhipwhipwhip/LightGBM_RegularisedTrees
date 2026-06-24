@@ -301,6 +301,10 @@ void SerialTreeLearner::BeforeTrain() {
 
   constraints_->Reset();
 
+  // reset which features have been used for a split in this tree
+  feature_used_in_cur_tree_.resize(train_data_->num_total_features());
+  std::fill(feature_used_in_cur_tree_.begin(), feature_used_in_cur_tree_.end(), 0);
+
   // reset the splits for leaves
   for (int i = 0; i < config_->num_leaves; ++i) {
     best_split_per_leaf_[i].Reset();
@@ -773,6 +777,7 @@ void SerialTreeLearner::SplitInner(Tree* tree, int best_leaf, int* left_leaf,
   SplitInfo& best_split_info = best_split_per_leaf_[best_leaf];
   const int inner_feature_index =
       train_data_->InnerFeatureIndex(best_split_info.feature);
+  feature_used_in_cur_tree_[best_split_info.feature] = 1;
   if (cegb_ != nullptr) {
     cegb_->UpdateLeafBestSplits(tree, best_leaf, &best_split_info,
                                 &best_split_per_leaf_);
@@ -1002,6 +1007,9 @@ void SerialTreeLearner::ComputeBestSplitForFeature(
     double penalty = constraints_->ComputeMonotoneSplitGainPenalty(
         leaf_splits->leaf_index(), config_->monotone_penalty);
     new_split.gain *= penalty;
+  }
+  if (!feature_used_in_cur_tree_[real_fidx]) {
+    new_split.gain *= config_->unused_feature_penalty;
   }
   // it is needed to filter the features after the above code.
   // Otherwise, the `is_splittable` in `FeatureHistogram` will be wrong, and cause some features being accidentally filtered in the later nodes.

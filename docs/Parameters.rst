@@ -621,6 +621,16 @@ Learning Control Parameters
 
    -  you need to specify all features in order
 
+-  ``unused_feature_penalty`` :raw-html:`<a id="unused_feature_penalty" title="Permalink to this parameter" href="#unused_feature_penalty">&#x1F517;&#xFE0E;</a>`, default = ``1.0``, type = double, constraints: ``0.0 <= unused_feature_penalty <= 1.0``
+
+   -  used to discourage introducing a feature into a tree that it has not already split on
+
+   -  if a candidate feature has not yet been used for any split in the tree currently being built, its split gain is scaled by ``unused_feature_penalty`` before being compared against other features' gains
+
+   -  does not affect the first split of a tree, since no feature has been used yet at that point
+
+   -  if ``1.0`` (the default), no penalty is applied
+
 -  ``forcedsplits_filename`` :raw-html:`<a id="forcedsplits_filename" title="Permalink to this parameter" href="#forcedsplits_filename">&#x1F517;&#xFE0E;</a>`, default = ``""``, type = string, aliases: ``fs``, ``forced_splits_filename``, ``forced_splits_file``, ``forced_splits``
 
    -  path to a ``.json`` file that specifies splits to force at the top of every decision tree before best-first learning commences

@@ -540,6 +540,14 @@ struct Config {
   // desc = you need to specify all features in order
   std::vector<double> feature_contri;
 
+  // check = >=0.0
+  // check = <=1.0
+  // desc = used to discourage introducing a feature into a tree that it has not already split on
+  // desc = if a candidate feature has not yet been used for any split in the tree currently being built, its split gain is scaled by ``unused_feature_penalty`` before being compared against other features' gains
+  // desc = does not affect the first split of a tree, since no feature has been used yet at that point
+  // desc = if ``1.0`` (the default), no penalty is applied
+  double unused_feature_penalty = 1.0;
+
   // alias = fs, forced_splits_filename, forced_splits_file, forced_splits
   // desc = path to a ``.json`` file that specifies splits to force at the top of every decision tree before best-first learning commences
   // desc = ``.json`` file can be arbitrarily nested, and each split contains ``feature``, ``threshold`` fields, as well as ``left`` and ``right`` fields representing subsplits
