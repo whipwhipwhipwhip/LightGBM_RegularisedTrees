@@ -484,3 +484,6 @@ dmypy.json
 
 # files created by release tasks
 /release-artifacts
+
+# local fast dev build dir (rebuild-dev.sh)
+build-dev/

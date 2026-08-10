@@ -187,8 +187,26 @@ class SerialTreeLearner: public TreeLearner {
   data_size_t num_data_;
   /*! \brief number of features */
   int num_features_;
-  /*! \brief whether each (real-indexed) feature has already been used for a split in the tree currently being built */
-  std::vector<int8_t> feature_used_in_cur_tree_;
+  /*!
+  * \brief Resolve `unused_feature_penalty_scope` into `unused_feature_penalty_ensemble_scope_`,
+  *        erroring on an unrecognised value. Does NOT touch the accumulated used-feature set,
+  *        so it is safe to call from ResetConfig() (which the reset_parameter callback drives
+  *        on every iteration for e.g. learning-rate decay).
+  */
+  void ResolveUnusedFeaturePenaltyScope();
+
+  /*!
+  * \brief Resolve the scope AND size `feature_used_for_penalty_` to the dataset, clearing it.
+  *        Only for points where starting the accumulation over is correct: initial Init() and
+  *        a change of training data.
+  */
+  void ResetUnusedFeaturePenalty();
+
+  /*! \brief whether each (real-indexed) feature has already been used for a split, over the
+      scope given by `unused_feature_penalty_scope` (current tree, or the whole ensemble) */
+  std::vector<int8_t> feature_used_for_penalty_;
+  /*! \brief `unused_feature_penalty_scope == "ensemble"`, resolved once so BeforeTrain() need not compare strings */
+  bool unused_feature_penalty_ensemble_scope_ = false;
   /*! \brief training data */
   const Dataset* train_data_;
   /*! \brief gradients of current iteration */

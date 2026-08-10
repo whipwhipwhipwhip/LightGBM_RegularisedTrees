@@ -1,4 +1,4 @@
-# Regularised Trees: per-tree feature-reuse penalty
+# Regularised Trees: feature-reuse penalty
 
 This file tracks the design and implementation of this fork's modification to
 LightGBM's split-gain calculation. It is not upstream LightGBM behavior — see
@@ -6,39 +6,111 @@ LightGBM's split-gain calculation. It is not upstream LightGBM behavior — see
 
 ## Goal
 
-Within a single tree, make it less attractive to introduce a feature that
-hasn't been used yet in that tree, unless its raw gain is good enough to
-overcome a penalty. The intent is to encourage trees to reuse a small set of
-features rather than spreading splits thinly across many features.
+Make it less attractive to introduce a feature that hasn't been split on yet,
+unless its raw gain is good enough to overcome a penalty. The intent is to
+encourage the model to reuse a small set of features rather than spreading
+splits thinly across many features.
+
+This implements the framework of Deng & Runger, *Feature Selection via
+Regularized Trees* ([arXiv:1201.1587](https://arxiv.org/abs/1201.1587)).
 
 ## Mechanism
 
-A new scalar config parameter, `unused_feature_penalty` (`include/LightGBM/config.h`),
-defaults to `1.0` (no effect) and is checked to lie in `[0.0, 1.0]`.
+Two config parameters in `include/LightGBM/config.h`:
+
+- `unused_feature_penalty` — a double defaulting to `1.0` (no effect), checked
+  to lie in `[0.0, 1.0]`. This is the paper's λ.
+- `unused_feature_penalty_scope` — `"tree"` (default) or `"ensemble"`,
+  controlling the scope over which the used-feature set F is accumulated.
 
 For a candidate split on feature `i` at any leaf:
 
 ```
-gain[i] -> unused_feature_penalty * gain[i]   if i has not yet been used for
-                                               a split anywhere in the current
-                                               tree
+gain[i] -> unused_feature_penalty * gain[i]   if i is not in F
 gain[i] -> gain[i]                            otherwise (unchanged)
 ```
 
-This is implemented in `src/treelearner/serial_tree_learner.{h,cpp}`:
+### The two scopes, and why the choice matters
 
-- `feature_used_in_cur_tree_` — a `std::vector<int8_t>`, indexed by the same
-  "real" feature index space as `feature_contri`/`monotone_constraints`
-  (`Dataset::RealFeatureIndex`), tracking which features have been split on
-  in the tree currently being built.
-- Reset to all-`false` in `BeforeTrain()`, alongside the existing
+| scope | F is cleared | does \|F\| converge? |
+| --- | --- | --- |
+| `tree` | at the start of every tree | **no** |
+| `ensemble` | never (only on `Init` / new training data) | **yes** |
+
+`ensemble` is the paper's semantics: *"F now represents the feature set used in
+previous splits not only from the current tree, but also from the previous
+built trees."* Once F stops growing, F **is** the selected feature subset —
+that convergence is the whole mechanism by which regularized trees perform
+feature selection.
+
+`tree` scope does not have that property. Because F is rebuilt from scratch
+each tree, different trees are free to pick different representatives of the
+same correlated group, and the union of features used across the model keeps
+growing with `num_iterations` until it saturates at "all of them". λ only
+changes the *rate*. Measured on a synthetic 5-block / 16-relevant / 30-noise
+design (ideal |F| = 5), counting features used anywhere in the model:
+
+```
+  |F| vs rounds:             1     5    20   100   500  1000  2000
+  tree     pen=1.0          13    20    41    46    46    46    46
+  tree     pen=0.01          1     3     7    16    36    41    44   <- still climbing
+  ensemble pen=1.0          13    20    41    46    46    46    46
+  ensemble pen=0.01          1     2     2     5     5     5     5   <- converged, and correct
+```
+
+At `ensemble` / λ=0.01 the selection is exactly right: one member per block,
+zero noise features, and held-out accuracy (0.784) matching both an oracle
+model given only the 5 true drivers (0.784) and the all-46-feature model
+(0.786).
+
+`tree` remains the default so existing results stay reproducible, but
+**`ensemble` is the scope to use for feature selection**.
+
+### Implementation
+
+All in `src/treelearner/serial_tree_learner.{h,cpp}`:
+
+- `feature_used_for_penalty_` — a `std::vector<int8_t>` holding F, indexed by
+  the same "real" feature index space as `feature_contri` /
+  `monotone_constraints` (`Dataset::RealFeatureIndex`).
+- `ResetUnusedFeaturePenalty()` sizes and clears it. Called from `Init()` and
+  `ResetTrainingDataInner()` — the only points at which starting the
+  accumulation over is correct.
+- `BeforeTrain()` clears it **only under `tree` scope**, alongside the existing
   `col_sampler_.ResetByTree()` / `constraints_->Reset()` per-tree resets.
+- `ResetConfig()` calls only `ResolveUnusedFeaturePenaltyScope()`, which
+  re-reads the scope without touching F. This matters: the `reset_parameter`
+  callback (commonly used for learning-rate decay) drives `ResetConfig()` on
+  *every* iteration, and clearing F there would silently degrade `ensemble`
+  scope back into `tree` scope.
 - Set to `true` in `SplitInner()` the moment a split is actually committed
-  to the tree (`best_split_info.feature`).
+  to the tree (`best_split_info.feature`, already a real index).
 - Applied in `ComputeBestSplitForFeature()`, immediately after the existing
   monotone-constraint penalty block, following the same
   `new_split.gain *= penalty` pattern already used there and for
   `feature_contri` (see `src/treelearner/feature_histogram.hpp`).
+
+An unrecognised scope string is a `Log::Fatal`, so a typo fails loudly rather
+than silently falling back to a default.
+
+## Known limitation: degenerate trees at small λ
+
+Under `tree` scope with λ ≲ 0.01, trees collapse to a **single feature each**
+(measured: mean distinct features per tree = 1.0, min 1, max 1). Once the first
+split lands, no other feature can clear the multiplicative bar within that
+tree. Under `ensemble` scope this is far less severe, since F is already
+populated when each tree starts, but it remains the thing to watch when tuning
+λ down. Any evaluation should report distinct-features-per-tree alongside |F| —
+metrics computed on the union across trees cannot see this failure.
+
+## Build
+
+`rebuild-dev.sh` builds only the C++ shared library and drops it into a
+consuming project's venv (default: `trees_testing`), skipping the wheel build
+entirely — seconds instead of minutes for an incremental change. It also
+re-signs the dylib: on Apple Silicon, overwriting a dylib in place invalidates
+its signature and the kernel SIGKILLs any process that loads it (Python exits
+137 producing no output at all, which is otherwise baffling to debug).
 
 `unused_feature_penalty` was regenerated through the existing config
 machinery: `.ci/parameter-generator.py` reads the doc comments above the

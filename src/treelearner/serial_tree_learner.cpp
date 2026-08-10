@@ -80,6 +80,25 @@ void SerialTreeLearner::Init(const Dataset* train_data, bool is_constant_hessian
     cegb_.reset(new CostEfficientGradientBoosting(this));
     cegb_->Init();
   }
+  ResetUnusedFeaturePenalty();
+}
+
+void SerialTreeLearner::ResolveUnusedFeaturePenaltyScope() {
+  if (config_->unused_feature_penalty_scope == "tree") {
+    unused_feature_penalty_ensemble_scope_ = false;
+  } else if (config_->unused_feature_penalty_scope == "ensemble") {
+    unused_feature_penalty_ensemble_scope_ = true;
+  } else {
+    Log::Fatal("Unknown unused_feature_penalty_scope %s, expected \"tree\" or \"ensemble\"",
+               config_->unused_feature_penalty_scope.c_str());
+  }
+}
+
+void SerialTreeLearner::ResetUnusedFeaturePenalty() {
+  ResolveUnusedFeaturePenaltyScope();
+  // Sized in the "real" feature index space, matching SplitInfo::feature and the
+  // real_fidx used in ComputeBestSplitForFeature.
+  feature_used_for_penalty_.assign(train_data_->num_total_features(), 0);
 }
 
 void SerialTreeLearner::GetShareStates(const Dataset* dataset,
@@ -139,6 +158,7 @@ void SerialTreeLearner::ResetTrainingDataInner(const Dataset* train_data,
   if (cegb_ != nullptr) {
     cegb_->Init();
   }
+  ResetUnusedFeaturePenalty();
 }
 
 void SerialTreeLearner::ResetConfig(const Config* config) {
@@ -178,6 +198,9 @@ void SerialTreeLearner::ResetConfig(const Config* config) {
     cegb_->Init();
   }
   constraints_.reset(LeafConstraintsBase::Create(config_, config_->num_leaves, train_data_->num_features()));
+  // Re-read the scope but keep whatever has already been accumulated: under ensemble scope
+  // the used-feature set must survive a mid-training config reset.
+  ResolveUnusedFeaturePenaltyScope();
 }
 
 Tree* SerialTreeLearner::Train(const score_t* gradients, const score_t *hessians, bool /*is_first_tree*/) {
@@ -301,9 +324,12 @@ void SerialTreeLearner::BeforeTrain() {
 
   constraints_->Reset();
 
-  // reset which features have been used for a split in this tree
-  feature_used_in_cur_tree_.resize(train_data_->num_total_features());
-  std::fill(feature_used_in_cur_tree_.begin(), feature_used_in_cur_tree_.end(), 0);
+  // Under "tree" scope the used-feature set is per-tree, so clear it here. Under "ensemble"
+  // scope it accumulates over every tree in the model and must survive across trees -- that
+  // accumulated set is what converges to the selected feature subset.
+  if (!unused_feature_penalty_ensemble_scope_) {
+    std::fill(feature_used_for_penalty_.begin(), feature_used_for_penalty_.end(), 0);
+  }
 
   // reset the splits for leaves
   for (int i = 0; i < config_->num_leaves; ++i) {
@@ -777,7 +803,9 @@ void SerialTreeLearner::SplitInner(Tree* tree, int best_leaf, int* left_leaf,
   SplitInfo& best_split_info = best_split_per_leaf_[best_leaf];
   const int inner_feature_index =
       train_data_->InnerFeatureIndex(best_split_info.feature);
-  feature_used_in_cur_tree_[best_split_info.feature] = 1;
+  // best_split_info.feature is a real feature index (set from real_fidx in
+  // ComputeBestSplitForFeature), matching how feature_used_for_penalty_ is indexed.
+  feature_used_for_penalty_[best_split_info.feature] = 1;
   if (cegb_ != nullptr) {
     cegb_->UpdateLeafBestSplits(tree, best_leaf, &best_split_info,
                                 &best_split_per_leaf_);
@@ -1008,7 +1036,7 @@ void SerialTreeLearner::ComputeBestSplitForFeature(
         leaf_splits->leaf_index(), config_->monotone_penalty);
     new_split.gain *= penalty;
   }
-  if (!feature_used_in_cur_tree_[real_fidx]) {
+  if (!feature_used_for_penalty_[real_fidx]) {
     new_split.gain *= config_->unused_feature_penalty;
   }
   // it is needed to filter the features after the above code.

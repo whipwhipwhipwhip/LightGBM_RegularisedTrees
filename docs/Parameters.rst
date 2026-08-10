@@ -623,13 +623,25 @@ Learning Control Parameters
 
 -  ``unused_feature_penalty`` :raw-html:`<a id="unused_feature_penalty" title="Permalink to this parameter" href="#unused_feature_penalty">&#x1F517;&#xFE0E;</a>`, default = ``1.0``, type = double, constraints: ``0.0 <= unused_feature_penalty <= 1.0``
 
-   -  used to discourage introducing a feature into a tree that it has not already split on
+   -  used to discourage introducing a feature that has not already been split on
 
-   -  if a candidate feature has not yet been used for any split in the tree currently being built, its split gain is scaled by ``unused_feature_penalty`` before being compared against other features' gains
+   -  if a candidate feature is not yet in the "used feature" set, its split gain is scaled by ``unused_feature_penalty`` before being compared against other features' gains
 
-   -  does not affect the first split of a tree, since no feature has been used yet at that point
+   -  the scope over which the "used feature" set is accumulated is controlled by ``unused_feature_penalty_scope``
+
+   -  has no effect while the used-feature set is empty, since scaling every candidate by the same factor does not change which one is best
 
    -  if ``1.0`` (the default), no penalty is applied
+
+-  ``unused_feature_penalty_scope`` :raw-html:`<a id="unused_feature_penalty_scope" title="Permalink to this parameter" href="#unused_feature_penalty_scope">&#x1F517;&#xFE0E;</a>`, default = ``tree``, type = string
+
+   -  scope over which the "used feature" set for ``unused_feature_penalty`` is accumulated
+
+   -  ``tree``, the set is cleared at the start of every tree, so a feature counts as used only if it has already been split on in the tree currently being built
+
+   -  ``ensemble``, the set persists across every tree in the model; once a feature has been split on anywhere, it is never penalized again. This is the behaviour described in `Feature Selection via Regularized Trees <https://arxiv.org/abs/1201.1587>`__, in which the accumulated set is itself the selected feature subset
+
+   -  **Note**: under ``tree`` scope the set of features used anywhere in the model does not converge -- it keeps growing with ``num_iterations`` -- so ``ensemble`` is the scope to use for feature selection
 
 -  ``forcedsplits_filename`` :raw-html:`<a id="forcedsplits_filename" title="Permalink to this parameter" href="#forcedsplits_filename">&#x1F517;&#xFE0E;</a>`, default = ``""``, type = string, aliases: ``fs``, ``forced_splits_filename``, ``forced_splits_file``, ``forced_splits``
 
