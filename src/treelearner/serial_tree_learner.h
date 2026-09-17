@@ -210,6 +210,22 @@ class SerialTreeLearner: public TreeLearner {
   */
   void ResetUnusedFeaturePenalty();
 
+  /*!
+  * \brief Resolve `unused_feature_penalty_candidates` into `unused_feature_candidates_`, and
+  *        take ownership of per-node column sampling while the rule is on. Safe to call from
+  *        ResetConfig(): it neither clears the used-feature set nor reseeds the candidate RNG,
+  *        but it must run after col_sampler_.SetConfig(), which restores the config fraction.
+  */
+  void ResolveUnusedFeaturePenaltyCandidates();
+
+  /*!
+  * \brief Per-node candidate mask: col_sampler_.GetByNode() with the candidate rule applied.
+  *        Every feature already in the used-feature set stays a candidate; at most
+  *        `unused_feature_candidates_` features outside it are drawn to challenge them.
+  *        Identical to col_sampler_.GetByNode() when the rule is off.
+  */
+  std::vector<int8_t> GetByNodeWithCandidateRule(const Tree* tree, int leaf);
+
   /*! \brief whether each (real-indexed) feature has already been used for a split, over the
       scope given by `unused_feature_penalty_scope` (current tree, or the whole ensemble) */
   std::vector<int8_t> feature_used_for_penalty_;
@@ -221,6 +237,15 @@ class SerialTreeLearner: public TreeLearner {
   std::vector<double> unused_feature_penalty_per_feature_;
   /*! \brief false when every lambda_i == 1.0, letting the split loop skip the penalty entirely */
   bool unused_feature_penalty_active_ = false;
+  /*! \brief resolved `unused_feature_penalty_candidates`: the number of not-yet-used features
+      drawn as candidates per node, or -1 when the rule is off */
+  int unused_feature_candidates_ = -1;
+  /*! \brief RNG for drawing challengers. Reseeded only alongside the used-feature set, never
+      from ResetConfig(), so a model's first r trees do not depend on how many are trained */
+  Random unused_feature_candidate_random_;
+  /*! \brief whether feature_fraction_bynode is currently being overridden, so the warning is
+      logged once rather than on every ResetConfig() */
+  bool feature_fraction_bynode_overridden_ = false;
   /*! \brief training data */
   const Dataset* train_data_;
   /*! \brief gradients of current iteration */

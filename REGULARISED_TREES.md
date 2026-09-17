@@ -118,6 +118,105 @@ than per split. `unused_feature_penalty_active_` short-circuits the split loop e
 `lambda_i == 1.0`. A guide of the wrong length is a `Log::Fatal` — a silently misaligned guide would
 penalize feature `i` by feature `j`'s score.
 
+## Candidate rule (`unused_feature_penalty_candidates`)
+
+The paper's Algorithm 1 has **two** mechanisms, and until this parameter the fork implemented only
+the first:
+
+> "The regularized random tree differs from the original random tree in the following ways:
+> 1) gainR(Xⱼ) is used for selecting the splitting feature; 2) gainR of all variables belonging to
+> F are calculated, and the gainR of up to ⌈√M⌉ randomly selected variables not belonging to F are
+> calculated."
+
+Mechanism (2) is an **asymmetric** per-node candidate set: every feature in F is always evaluated,
+and at most K features outside F are drawn to challenge them. It is part of the regularized tree
+algorithm, not of the random-forest base learner, and the paper's boosted variant (RBoost:
+AdaBoost over Weka random trees) had it too.
+
+| value | meaning |
+| --- | --- |
+| `-1` (default) | off; every feature is a candidate at every node |
+| `0` | K = ⌈√M⌉, the paper's value, with M = `num_total_features()` |
+| `k > 0` | K = k |
+
+It is independent of λ, so `unused_feature_penalty = 1.0` with the rule on isolates mechanism (2).
+It reads the same F as the penalty, so `unused_feature_penalty_scope` governs both.
+
+### Why `feature_fraction_bynode` can't approximate it
+
+A symmetric per-node fraction at the same average rate masks incumbents as often as challengers.
+With |F| = 5 and a rate of K/M ≈ 0.046, every incumbent is masked at 79% of nodes, and a challenger
+then enters F having beaten nothing. That failure is worst while F is small, which is exactly when
+F is being formed. Measured on one strong feature plus 199 noise features (stumps, λ=1, `ensemble`
+scope): once the strong feature is admitted, it wins **100%** of later stumps under the rule and
+**7.9%** under `feature_fraction_bynode = K/M`.
+
+### Implementation
+
+- `SerialTreeLearner::GetByNodeWithCandidateRule()` wraps `col_sampler_.GetByNode()` and replaces
+  it at all three per-node call sites. It clears every non-F feature from the mask and then sets K
+  of them back at random. Challengers are drawn only from features in this tree's bytree sample,
+  since the others have no histograms. Interaction constraints still apply because the base mask
+  still comes from the column sampler.
+- **The rule owns per-node sampling.** While it is on, `ColSampler::SetFractionByNode(1.0)` pins
+  the sampler's per-node fraction, and a non-default `feature_fraction_bynode` is ignored with one
+  warning. `ColSampler::SetConfig()` restores the config value, so `ResetConfig()` re-applies the
+  override afterwards; `feature_fraction_bynode_overridden_` stops the warning repeating every
+  iteration.
+- **Its own RNG**, `unused_feature_candidate_random_`, is reseeded only in
+  `ResetUnusedFeaturePenalty()`, alongside F and never from `ResetConfig()`. So the challenger
+  stream depends only on the trees built so far, which keeps boosting prefix-consistent. The seed
+  is a hash of `feature_fraction_seed`, because `Random` is a bare LCG and both the same seed and
+  an adjacent one would give a correlated stream.
+- `Random::Sample(N, K)` returns an **empty** vector when K > N, so the draw is clamped to the pool
+  size. Without the clamp, K ≥ |pool| would silently admit no challengers at all.
+
+### Verified
+
+- With the default of `-1`, tree dumps and predictions are byte-identical to the pre-change build
+  across vanilla, both scopes, GRRF, `feature_fraction_bynode`, `boosting=rf` and bytree+bynode.
+- K ≥ M gives the same model as the rule switched off, at λ=1.0 and λ=0.1.
+- K=0 gives the same model as an explicit K=⌈√M⌉.
+- From an empty F with K=1, the root split feature varies across seeds (23 distinct of 38); with
+  the rule off it is always the same.
+- The incumbent guarantee holds (above).
+- The model is prefix-consistent under both scopes: the first 30 trees of an 80-round model equal
+  a 30-round model.
+- Training with a `reset_parameter` callback gives the same model as training without one.
+- The model is deterministic for a fixed seed and changes with the seed. Setting
+  `feature_fraction_bynode` alongside the rule changes nothing.
+- It runs alongside `feature_fraction < 1` and `interaction_constraints`.
+
+### Limitations
+
+- **Serial learner only.** The data- and voting-parallel learners call `col_sampler_.GetByNode()`
+  directly, and the CUDA learner reads `feature_fraction_bynode` itself, so all three ignore the
+  rule. LightGBM forces the serial learner when `num_machines = 1`.
+- **No speedup.** Histograms are built from the bytree mask, and the per-node mask only filters
+  split selection. The paper's efficiency argument, where evaluating K features instead of M saves
+  work, does not carry over to a histogram learner.
+- **Stale masks.** A leaf's mask is drawn when its best split is computed and then cached. A
+  feature that joins F later, through a split elsewhere, is not added to pending leaves' masks. This
+  is the same staleness documented below for gains.
+
+### First look (not the experiment)
+
+Synthetic redundant-blocks design, M=38, `num_leaves=15`, `ensemble` scope, one seed. The rule
+**delays** admission to F but, under GBDT, does not **stop** it:
+
+```
+  |F| vs rounds:        1    5   20   50  100  400
+  lam=1.0  K=-1         9   13   24   38   38   38
+  lam=1.0  K=0 (7)      6    8   15   38   38   38
+  lam=1.0  K=1          5    8   13   34   38   38
+  lam=0.1  K=-1         3    3    4    5    7   10
+  lam=0.1  K=0 (7)      2    3    4    5    6   10
+  lam=0.1  K=1          1    3    4    5    6   10
+```
+
+M=38 makes this a weak restriction: K=7 samples 18% of features, against 4.6% on MADELON. Draw
+conclusions from the matched-cardinality comparison, not from this table.
+
 ## Evaluation outcome
 
 Measured in the companion repo (`../trees_testing`), on MADELON with matched cardinality and paired
@@ -129,6 +228,8 @@ per-seed comparisons over 10 seeds:
   0/10 seeds) — using the very importance scores that guide it, at double the training cost.
 - Swapping the base learner to a random forest (`boosting=rf`, `feature_fraction_bynode=sqrt(p)/p`)
   **flips the verdict**: the unguided penalty then beats its matched RF baseline 10/10 (+0.0120).
+
+*This conclusion predates `unused_feature_penalty_candidates`: these runs had only the gain penalty, so the RF arm differed from the GBDT arm in per-node sampling as well as base learner.*
 
 Conclusion: this is a random-forest method. It depends on candidate re-randomisation at every node,
 which gradient boosting does not have — under boosting, `F` is fixed early by a few noisy splits and

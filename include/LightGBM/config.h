@@ -572,6 +572,16 @@ struct Config {
   // desc = values are clamped into ``[0, 1]``; must have one entry per feature if set
   std::vector<double> unused_feature_penalty_guide;
 
+  // check = >=-1
+  // desc = number of not-yet-used features sampled as split candidates at each node, as in Algorithm 1 of `Feature Selection via Regularized Trees <https://arxiv.org/abs/1201.1587>`__
+  // desc = when enabled, every feature already in the "used feature" set is always a candidate, and at most this many features outside it are drawn at random to compete with them, so a new feature has to beat every used feature to be admitted
+  // desc = ``-1`` (the default) disables the rule, so every feature is a candidate at every node
+  // desc = ``0`` uses ``ceil(sqrt(num_features))``, the value used in the paper
+  // desc = works independently of ``unused_feature_penalty``: with ``unused_feature_penalty = 1.0`` the candidate rule is the only mechanism in effect
+  // desc = the "used feature" set is the same one ``unused_feature_penalty`` uses, so ``unused_feature_penalty_scope`` applies here too
+  // desc = **Note**: when enabled, this rule replaces per-node column sampling, so ``feature_fraction_bynode`` is ignored (with a warning). ``feature_fraction`` still applies, and challengers are only drawn from the features sampled for the current tree
+  int unused_feature_penalty_candidates = -1;
+
   // alias = fs, forced_splits_filename, forced_splits_file, forced_splits
   // desc = path to a ``.json`` file that specifies splits to force at the top of every decision tree before best-first learning commences
   // desc = ``.json`` file can be arbitrarily nested, and each split contains ``feature``, ``threshold`` fields, as well as ``left`` and ``right`` fields representing subsplits

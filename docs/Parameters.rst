@@ -665,6 +665,22 @@ Learning Control Parameters
 
    -  values are clamped into ``[0, 1]``; must have one entry per feature if set
 
+-  ``unused_feature_penalty_candidates`` :raw-html:`<a id="unused_feature_penalty_candidates" title="Permalink to this parameter" href="#unused_feature_penalty_candidates">&#x1F517;&#xFE0E;</a>`, default = ``-1``, type = int, constraints: ``unused_feature_penalty_candidates >= -1``
+
+   -  number of not-yet-used features sampled as split candidates at each node, as in Algorithm 1 of `Feature Selection via Regularized Trees <https://arxiv.org/abs/1201.1587>`__
+
+   -  when enabled, every feature already in the "used feature" set is always a candidate, and at most this many features outside it are drawn at random to compete with them, so a new feature has to beat every used feature to be admitted
+
+   -  ``-1`` (the default) disables the rule, so every feature is a candidate at every node
+
+   -  ``0`` uses ``ceil(sqrt(num_features))``, the value used in the paper
+
+   -  works independently of ``unused_feature_penalty``: with ``unused_feature_penalty = 1.0`` the candidate rule is the only mechanism in effect
+
+   -  the "used feature" set is the same one ``unused_feature_penalty`` uses, so ``unused_feature_penalty_scope`` applies here too
+
+   -  **Note**: when enabled, this rule replaces per-node column sampling, so ``feature_fraction_bynode`` is ignored (with a warning). ``feature_fraction`` still applies, and challengers are only drawn from the features sampled for the current tree
+
 -  ``forcedsplits_filename`` :raw-html:`<a id="forcedsplits_filename" title="Permalink to this parameter" href="#forcedsplits_filename">&#x1F517;&#xFE0E;</a>`, default = ``""``, type = string, aliases: ``fs``, ``forced_splits_filename``, ``forced_splits_file``, ``forced_splits``
 
    -  path to a ``.json`` file that specifies splits to force at the top of every decision tree before best-first learning commences

@@ -251,6 +251,7 @@ const std::unordered_set<std::string>& Config::parameter_set() {
   "unused_feature_penalty_scope",
   "unused_feature_penalty_gamma",
   "unused_feature_penalty_guide",
+  "unused_feature_penalty_candidates",
   "forcedsplits_filename",
   "refit_decay_rate",
   "cegb_tradeoff",
@@ -495,6 +496,9 @@ void Config::GetMembersFromString(const std::unordered_map<std::string, std::str
   if (GetString(params, "unused_feature_penalty_guide", &tmp_str)) {
     unused_feature_penalty_guide = Common::StringToArray<double>(tmp_str, ',');
   }
+
+  GetInt(params, "unused_feature_penalty_candidates", &unused_feature_penalty_candidates);
+  CHECK_GE(unused_feature_penalty_candidates, -1);
 
   GetString(params, "forcedsplits_filename", &forcedsplits_filename);
 
@@ -755,6 +759,7 @@ std::string Config::SaveMembersToString() const {
   str_buf << "[unused_feature_penalty_scope: " << unused_feature_penalty_scope << "]\n";
   str_buf << "[unused_feature_penalty_gamma: " << unused_feature_penalty_gamma << "]\n";
   str_buf << "[unused_feature_penalty_guide: " << Common::Join(unused_feature_penalty_guide, ",") << "]\n";
+  str_buf << "[unused_feature_penalty_candidates: " << unused_feature_penalty_candidates << "]\n";
   str_buf << "[forcedsplits_filename: " << forcedsplits_filename << "]\n";
   str_buf << "[refit_decay_rate: " << refit_decay_rate << "]\n";
   str_buf << "[cegb_tradeoff: " << cegb_tradeoff << "]\n";
@@ -886,6 +891,7 @@ const std::unordered_map<std::string, std::vector<std::string>>& Config::paramet
     {"unused_feature_penalty_scope", {}},
     {"unused_feature_penalty_gamma", {}},
     {"unused_feature_penalty_guide", {}},
+    {"unused_feature_penalty_candidates", {}},
     {"forcedsplits_filename", {"fs", "forced_splits_filename", "forced_splits_file", "forced_splits"}},
     {"refit_decay_rate", {}},
     {"cegb_tradeoff", {}},
@@ -1036,6 +1042,7 @@ const std::unordered_map<std::string, std::string>& Config::ParameterTypes() {
     {"unused_feature_penalty_scope", "string"},
     {"unused_feature_penalty_gamma", "double"},
     {"unused_feature_penalty_guide", "vector<double>"},
+    {"unused_feature_penalty_candidates", "int"},
     {"forcedsplits_filename", "string"},
     {"refit_decay_rate", "double"},
     {"cegb_tradeoff", "double"},

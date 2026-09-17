@@ -181,6 +181,15 @@ class ColSampler {
     return ret;
   }
 
+  /*!
+  * \brief Override the per-node sampling fraction read from config. Used when another rule
+  *        (unused_feature_penalty_candidates) owns per-node sampling. SetConfig() restores
+  *        the config value, so callers must re-apply this after every SetConfig().
+  */
+  void SetFractionByNode(double fraction) {
+    fraction_bynode_ = fraction;
+  }
+
   const std::vector<int8_t>& is_feature_used_bytree() const {
     return is_feature_used_;
   }

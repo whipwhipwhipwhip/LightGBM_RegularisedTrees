@@ -137,6 +137,75 @@ void SerialTreeLearner::ResetUnusedFeaturePenalty() {
   // Sized in the "real" feature index space, matching SplitInfo::feature and the
   // real_fidx used in ComputeBestSplitForFeature.
   feature_used_for_penalty_.assign(train_data_->num_total_features(), 0);
+  ResolveUnusedFeaturePenaltyCandidates();
+  // Reseeded only here, with the used-feature set, so the challenger stream is a function of the
+  // trees built so far and training r rounds reproduces the first r trees of a longer run.
+  // Random is a bare LCG, so the seed is mixed rather than reusing feature_fraction_seed (which
+  // col_sampler_ is already seeded with) or an adjacent value, either of which would give a
+  // correlated stream.
+  uint32_t h = static_cast<uint32_t>(config_->feature_fraction_seed) + 0x9e3779b9u;
+  h = (h ^ (h >> 16)) * 0x85ebca6bu;
+  h = (h ^ (h >> 13)) * 0xc2b2ae35u;
+  h ^= h >> 16;
+  unused_feature_candidate_random_ = Random(static_cast<int>(h));
+}
+
+void SerialTreeLearner::ResolveUnusedFeaturePenaltyCandidates() {
+  const int k = config_->unused_feature_penalty_candidates;
+  if (k < 0) {
+    unused_feature_candidates_ = -1;
+  } else if (k == 0) {
+    // M is the user-facing feature count, the same M a caller computes from their data.
+    const int num_total = train_data_->num_total_features();
+    unused_feature_candidates_ = std::max(1, static_cast<int>(std::ceil(std::sqrt(num_total))));
+  } else {
+    unused_feature_candidates_ = k;
+  }
+
+  const bool override_bynode = unused_feature_candidates_ >= 0 && config_->feature_fraction_bynode < 1.0;
+  if (override_bynode && !feature_fraction_bynode_overridden_) {
+    Log::Warning("feature_fraction_bynode is %g but unused_feature_penalty_candidates is set, which "
+                 "owns per-node feature sampling; feature_fraction_bynode will be ignored",
+                 config_->feature_fraction_bynode);
+  }
+  feature_fraction_bynode_overridden_ = override_bynode;
+  if (override_bynode) {
+    col_sampler_.SetFractionByNode(1.0);
+  }
+}
+
+std::vector<int8_t> SerialTreeLearner::GetByNodeWithCandidateRule(const Tree* tree, int leaf) {
+  // Still goes through the column sampler so interaction constraints keep applying. With the
+  // rule on, its per-node fraction is pinned to 1.0, so this draws nothing from its RNG.
+  std::vector<int8_t> node_used_features = col_sampler_.GetByNode(tree, leaf);
+  if (unused_feature_candidates_ < 0) {
+    return node_used_features;
+  }
+  // Deng & Runger, Algorithm 1: the gain of every feature already in F is evaluated, and the
+  // gain of up to K randomly selected features not in F. So to enter F a feature has to beat
+  // all of F, and incumbents are never masked out. Challengers are only drawn from features
+  // this tree actually built histograms for, or a draw could be spent on one that cannot split.
+  const auto& is_feature_used_bytree = col_sampler_.is_feature_used_bytree();
+  std::vector<int> challengers;
+  for (int inner_fidx = 0; inner_fidx < num_features_; ++inner_fidx) {
+    if (!node_used_features[inner_fidx]) {
+      continue;
+    }
+    if (feature_used_for_penalty_[train_data_->RealFeatureIndex(inner_fidx)]) {
+      continue;
+    }
+    node_used_features[inner_fidx] = 0;
+    if (is_feature_used_bytree[inner_fidx]) {
+      challengers.push_back(inner_fidx);
+    }
+  }
+  const int num_challengers = static_cast<int>(challengers.size());
+  // Random::Sample returns nothing at all when asked for more than it has, so clamp.
+  const int num_draw = std::min(unused_feature_candidates_, num_challengers);
+  for (int idx : unused_feature_candidate_random_.Sample(num_challengers, num_draw)) {
+    node_used_features[challengers[idx]] = 1;
+  }
+  return node_used_features;
 }
 
 void SerialTreeLearner::GetShareStates(const Dataset* dataset,
@@ -241,6 +310,7 @@ void SerialTreeLearner::ResetConfig(const Config* config) {
   // config reset (reset_parameter drives this on every iteration for learning-rate decay).
   ResolveUnusedFeaturePenaltyScope();
   ResolveUnusedFeaturePenaltyLambdas();
+  ResolveUnusedFeaturePenaltyCandidates();
 }
 
 Tree* SerialTreeLearner::Train(const score_t* gradients, const score_t *hessians, bool /*is_first_tree*/) {
@@ -554,7 +624,7 @@ void SerialTreeLearner::FindBestSplitsFromHistograms(
       "SerialTreeLearner::FindBestSplitsFromHistograms", global_timer);
   std::vector<SplitInfo> smaller_best(share_state_->num_threads);
   std::vector<SplitInfo> larger_best(share_state_->num_threads);
-  std::vector<int8_t> smaller_node_used_features = col_sampler_.GetByNode(tree, smaller_leaf_splits_->leaf_index());
+  std::vector<int8_t> smaller_node_used_features = GetByNodeWithCandidateRule(tree, smaller_leaf_splits_->leaf_index());
   std::vector<int8_t> larger_node_used_features;
   double smaller_leaf_parent_output = GetParentOutput(tree, smaller_leaf_splits_.get());
   double larger_leaf_parent_output = 0;
@@ -562,7 +632,7 @@ void SerialTreeLearner::FindBestSplitsFromHistograms(
     larger_leaf_parent_output = GetParentOutput(tree, larger_leaf_splits_.get());
   }
   if (larger_leaf_splits_->leaf_index() >= 0) {
-    larger_node_used_features = col_sampler_.GetByNode(tree, larger_leaf_splits_->leaf_index());
+    larger_node_used_features = GetByNodeWithCandidateRule(tree, larger_leaf_splits_->leaf_index());
   }
 
   if (use_subtract && config_->use_quantized_grad) {
@@ -1127,7 +1197,7 @@ void SerialTreeLearner::RecomputeBestSplitForLeaf(Tree* tree, int leaf, SplitInf
 
   OMP_INIT_EX();
 // find splits
-std::vector<int8_t> node_used_features = col_sampler_.GetByNode(tree, leaf);
+std::vector<int8_t> node_used_features = GetByNodeWithCandidateRule(tree, leaf);
 #pragma omp parallel for schedule(static) num_threads(share_state_->num_threads)
   for (int feature_index = 0; feature_index < num_features_; ++feature_index) {
     OMP_LOOP_EX_BEGIN();
