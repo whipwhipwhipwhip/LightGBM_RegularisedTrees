@@ -94,8 +94,46 @@ void SerialTreeLearner::ResolveUnusedFeaturePenaltyScope() {
   }
 }
 
+void SerialTreeLearner::ResolveUnusedFeaturePenaltyLambdas() {
+  const int num_total = train_data_->num_total_features();
+  const double lambda0 = config_->unused_feature_penalty;
+  const double gamma = config_->unused_feature_penalty_gamma;
+  const auto& guide = config_->unused_feature_penalty_guide;
+
+  if (!guide.empty() && static_cast<int>(guide.size()) != num_total) {
+    Log::Fatal("unused_feature_penalty_guide has %d entries but the dataset has %d features; "
+               "it must have exactly one entry per feature",
+               static_cast<int>(guide.size()), num_total);
+  }
+  if (gamma > 0.0 && guide.empty()) {
+    Log::Warning("unused_feature_penalty_gamma is %g but unused_feature_penalty_guide is empty, "
+                 "so the guided penalty has no effect", gamma);
+  }
+
+  unused_feature_penalty_per_feature_.assign(num_total, lambda0);
+  if (gamma > 0.0 && !guide.empty()) {
+    // Guided regularized trees: lambda_i = (1 - gamma) * lambda_0 + gamma * Imp'_i.
+    // A feature the preliminary model rated highly ends up with lambda_i near 1 and is
+    // barely penalized, so which features become penalty-exempt is decided by prior
+    // evidence rather than by whichever early split happened to fire first.
+    for (int i = 0; i < num_total; ++i) {
+      const double imp = std::min(1.0, std::max(0.0, guide[i]));
+      unused_feature_penalty_per_feature_[i] = (1.0 - gamma) * lambda0 + gamma * imp;
+    }
+  }
+
+  unused_feature_penalty_active_ = false;
+  for (int i = 0; i < num_total; ++i) {
+    if (unused_feature_penalty_per_feature_[i] != 1.0) {
+      unused_feature_penalty_active_ = true;
+      break;
+    }
+  }
+}
+
 void SerialTreeLearner::ResetUnusedFeaturePenalty() {
   ResolveUnusedFeaturePenaltyScope();
+  ResolveUnusedFeaturePenaltyLambdas();
   // Sized in the "real" feature index space, matching SplitInfo::feature and the
   // real_fidx used in ComputeBestSplitForFeature.
   feature_used_for_penalty_.assign(train_data_->num_total_features(), 0);
@@ -198,9 +236,11 @@ void SerialTreeLearner::ResetConfig(const Config* config) {
     cegb_->Init();
   }
   constraints_.reset(LeafConstraintsBase::Create(config_, config_->num_leaves, train_data_->num_features()));
-  // Re-read the scope but keep whatever has already been accumulated: under ensemble scope
-  // the used-feature set must survive a mid-training config reset.
+  // Re-read the scope and rebuild the per-feature lambdas, but keep whatever has already
+  // been accumulated: under ensemble scope the used-feature set must survive a mid-training
+  // config reset (reset_parameter drives this on every iteration for learning-rate decay).
   ResolveUnusedFeaturePenaltyScope();
+  ResolveUnusedFeaturePenaltyLambdas();
 }
 
 Tree* SerialTreeLearner::Train(const score_t* gradients, const score_t *hessians, bool /*is_first_tree*/) {
@@ -1036,8 +1076,8 @@ void SerialTreeLearner::ComputeBestSplitForFeature(
         leaf_splits->leaf_index(), config_->monotone_penalty);
     new_split.gain *= penalty;
   }
-  if (!feature_used_for_penalty_[real_fidx]) {
-    new_split.gain *= config_->unused_feature_penalty;
+  if (unused_feature_penalty_active_ && !feature_used_for_penalty_[real_fidx]) {
+    new_split.gain *= unused_feature_penalty_per_feature_[real_fidx];
   }
   // it is needed to filter the features after the above code.
   // Otherwise, the `is_splittable` in `FeatureHistogram` will be wrong, and cause some features being accidentally filtered in the later nodes.

@@ -555,6 +555,23 @@ struct Config {
   // desc = **Note**: under ``tree`` scope the set of features used anywhere in the model does not converge -- it keeps growing with ``num_iterations`` -- so ``ensemble`` is the scope to use for feature selection
   std::string unused_feature_penalty_scope = "tree";
 
+  // check = >=0.0
+  // check = <=1.0
+  // desc = weight given to ``unused_feature_penalty_guide`` when forming the per-feature penalty, as in `Guided Regularized Random Forest <https://arxiv.org/abs/1209.6425>`__
+  // desc = the penalty applied to an unused feature i becomes ``lambda_i = (1 - gamma) * unused_feature_penalty + gamma * unused_feature_penalty_guide[i]``
+  // desc = at ``0.0`` (the default) every unused feature gets the same ``unused_feature_penalty``, i.e. plain regularized trees
+  // desc = at ``1.0`` the penalty is entirely determined by the guide, so a feature the guide rates at 1.0 is not penalized at all and one rated 0.0 is fully suppressed
+  // desc = has no effect unless ``unused_feature_penalty_guide`` is also set
+  double unused_feature_penalty_gamma = 0.0;
+
+  // type = multi-double
+  // default = None
+  // desc = per-feature guide scores in ``[0, 1]`` used with ``unused_feature_penalty_gamma``, one per feature in order
+  // desc = intended to hold normalised importances from a preliminary ordinary model, ``Imp'_i = Imp_i / max_j Imp_j``, as prescribed for guided regularized random forests
+  // desc = the point is to stop an arbitrary early split from deciding which features become penalty-exempt: a feature the preliminary model rated highly starts out barely penalized
+  // desc = values are clamped into ``[0, 1]``; must have one entry per feature if set
+  std::vector<double> unused_feature_penalty_guide;
+
   // alias = fs, forced_splits_filename, forced_splits_file, forced_splits
   // desc = path to a ``.json`` file that specifies splits to force at the top of every decision tree before best-first learning commences
   // desc = ``.json`` file can be arbitrarily nested, and each split contains ``feature``, ``threshold`` fields, as well as ``left`` and ``right`` fields representing subsplits

@@ -643,6 +643,28 @@ Learning Control Parameters
 
    -  **Note**: under ``tree`` scope the set of features used anywhere in the model does not converge -- it keeps growing with ``num_iterations`` -- so ``ensemble`` is the scope to use for feature selection
 
+-  ``unused_feature_penalty_gamma`` :raw-html:`<a id="unused_feature_penalty_gamma" title="Permalink to this parameter" href="#unused_feature_penalty_gamma">&#x1F517;&#xFE0E;</a>`, default = ``0.0``, type = double, constraints: ``0.0 <= unused_feature_penalty_gamma <= 1.0``
+
+   -  weight given to ``unused_feature_penalty_guide`` when forming the per-feature penalty, as in `Guided Regularized Random Forest <https://arxiv.org/abs/1209.6425>`__
+
+   -  the penalty applied to an unused feature i becomes ``lambda_i = (1 - gamma) * unused_feature_penalty + gamma * unused_feature_penalty_guide[i]``
+
+   -  at ``0.0`` (the default) every unused feature gets the same ``unused_feature_penalty``, i.e. plain regularized trees
+
+   -  at ``1.0`` the penalty is entirely determined by the guide, so a feature the guide rates at 1.0 is not penalized at all and one rated 0.0 is fully suppressed
+
+   -  has no effect unless ``unused_feature_penalty_guide`` is also set
+
+-  ``unused_feature_penalty_guide`` :raw-html:`<a id="unused_feature_penalty_guide" title="Permalink to this parameter" href="#unused_feature_penalty_guide">&#x1F517;&#xFE0E;</a>`, default = ``None``, type = multi-double
+
+   -  per-feature guide scores in ``[0, 1]`` used with ``unused_feature_penalty_gamma``, one per feature in order
+
+   -  intended to hold normalised importances from a preliminary ordinary model, ``Imp'_i = Imp_i / max_j Imp_j``, as prescribed for guided regularized random forests
+
+   -  the point is to stop an arbitrary early split from deciding which features become penalty-exempt: a feature the preliminary model rated highly starts out barely penalized
+
+   -  values are clamped into ``[0, 1]``; must have one entry per feature if set
+
 -  ``forcedsplits_filename`` :raw-html:`<a id="forcedsplits_filename" title="Permalink to this parameter" href="#forcedsplits_filename">&#x1F517;&#xFE0E;</a>`, default = ``""``, type = string, aliases: ``fs``, ``forced_splits_filename``, ``forced_splits_file``, ``forced_splits``
 
    -  path to a ``.json`` file that specifies splits to force at the top of every decision tree before best-first learning commences

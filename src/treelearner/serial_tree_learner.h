@@ -196,6 +196,14 @@ class SerialTreeLearner: public TreeLearner {
   void ResolveUnusedFeaturePenaltyScope();
 
   /*!
+  * \brief Fold `unused_feature_penalty`, `unused_feature_penalty_gamma` and
+  *        `unused_feature_penalty_guide` into one lambda_i per feature. Cheap, and safe to
+  *        call from ResetConfig() -- it rebuilds the multipliers without disturbing the
+  *        accumulated used-feature set.
+  */
+  void ResolveUnusedFeaturePenaltyLambdas();
+
+  /*!
   * \brief Resolve the scope AND size `feature_used_for_penalty_` to the dataset, clearing it.
   *        Only for points where starting the accumulation over is correct: initial Init() and
   *        a change of training data.
@@ -207,6 +215,12 @@ class SerialTreeLearner: public TreeLearner {
   std::vector<int8_t> feature_used_for_penalty_;
   /*! \brief `unused_feature_penalty_scope == "ensemble"`, resolved once so BeforeTrain() need not compare strings */
   bool unused_feature_penalty_ensemble_scope_ = false;
+  /*! \brief per-feature (real-indexed) penalty lambda_i applied to a not-yet-used feature's split
+      gain. Folds unused_feature_penalty, unused_feature_penalty_gamma and
+      unused_feature_penalty_guide into one number per feature, computed once per config. */
+  std::vector<double> unused_feature_penalty_per_feature_;
+  /*! \brief false when every lambda_i == 1.0, letting the split loop skip the penalty entirely */
+  bool unused_feature_penalty_active_ = false;
   /*! \brief training data */
   const Dataset* train_data_;
   /*! \brief gradients of current iteration */

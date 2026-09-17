@@ -93,6 +93,48 @@ All in `src/treelearner/serial_tree_learner.{h,cpp}`:
 An unrecognised scope string is a `Log::Fatal`, so a typo fails loudly rather
 than silently falling back to a default.
 
+## Guided penalty (GRRF)
+
+`unused_feature_penalty_gamma` (γ) and `unused_feature_penalty_guide` (a per-feature vector)
+implement the follow-up paper, [Gene Selection with Guided Regularized Random
+Forest](https://arxiv.org/abs/1209.6425). The single λ becomes per-feature:
+
+```
+lambda_i = (1 - gamma) * unused_feature_penalty + gamma * guide[i]
+```
+
+where `guide[i]` is intended to be a normalised importance `Imp'_i = Imp_i / max_j Imp_j` from a
+preliminary ordinary model. A feature the preliminary model rated highly ends up with `lambda_i`
+near 1 and is barely penalized; a probe gets `lambda_i` near λ₀ and is suppressed.
+
+The point is to stop an arbitrary early split from deciding which features become penalty-exempt.
+The paper's own motivation is the same failure — at a node with few instances gains tie often
+(Theorem 1 bounds the number of distinct gains at N instances to `N(N+2)/4 - 1`), so the choice
+among tied features is close to arbitrary.
+
+Implementation: `ResolveUnusedFeaturePenaltyLambdas()` folds λ₀, γ and the guide into one
+`lambda_i` per feature in `unused_feature_penalty_per_feature_`, computed once per config rather
+than per split. `unused_feature_penalty_active_` short-circuits the split loop entirely when every
+`lambda_i == 1.0`. A guide of the wrong length is a `Log::Fatal` — a silently misaligned guide would
+penalize feature `i` by feature `j`'s score.
+
+## Evaluation outcome
+
+Measured in the companion repo (`../trees_testing`), on MADELON with matched cardinality and paired
+per-seed comparisons over 10 seeds:
+
+- GRRF **fixes the mechanism it targets**: against the unguided penalty it wins 10/10 seeds
+  (+0.0598 AUC), and probes among the selected drop from 23.7 to 4.3.
+- It **still loses** to plain top-k by gain importance at the same cardinality (−0.0199, SE 0.0032,
+  0/10 seeds) — using the very importance scores that guide it, at double the training cost.
+- Swapping the base learner to a random forest (`boosting=rf`, `feature_fraction_bynode=sqrt(p)/p`)
+  **flips the verdict**: the unguided penalty then beats its matched RF baseline 10/10 (+0.0120).
+
+Conclusion: this is a random-forest method. It depends on candidate re-randomisation at every node,
+which gradient boosting does not have — under boosting, `F` is fixed early by a few noisy splits and
+the penalty can only reorder gains, never evict a feature already admitted. See the companion repo's
+`README.md`.
+
 ## Known limitation: degenerate trees at small λ
 
 Under `tree` scope with λ ≲ 0.01, trees collapse to a **single feature each**
